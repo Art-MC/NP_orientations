@@ -165,9 +165,9 @@ class state(object):
         	# picked by the user. (doesnt work well for grain boundaries)
         self.QD_list_crop = None # the cropped list, dots that have a cm more than 200 pixels from an edge
         	# (the analysis can only really be done on QDs that have a full set of neighbors)
-        self.ave_beta_KD = None # the global SL orientation that is the average 
+        self.ave_psi4_KD = None # the global SL orientation that is the average 
         	# of all the psi4KD orientation
-        self.ave_beta_vor = None # same as above, but psi4Vor
+        self.ave_psi4_vor = None # same as above, but psi4Vor
 
     # the big one
     def segment_dots(self):
@@ -272,8 +272,8 @@ class state(object):
         # normally buffer set to 250 pixels, could be changed
         self.QD_list_crop = self.crop_QD_list(self.QD_list,200,self.orig_image)
         #get global SL orientation from average of local psi4 orientations
-        self.ave_beta_vor = self.get_mean_beta(self.QD_list_crop,'vor')
-        self.ave_beta_KD = self.get_mean_beta(self.QD_list_crop,'KD')
+        self.ave_psi4_vor = self.get_mean_beta(self.QD_list_crop,'vor')
+        self.ave_psi4_KD = self.get_mean_beta(self.QD_list_crop,'KD')
         voronoi_neighbors(self.QD_list)
         psi6V(self.QD_list)
         get_strain(self.QD_list)
@@ -2371,10 +2371,10 @@ def dif_plot(state, QD_list,bKD_bVOR,QD_list2 = None):
     psi4list = []
     
     if bKD_bVOR == 'bKD':
-        ave_L = state.ave_beta_KD
+        ave_L = state.ave_psi4_KD
         tmp = "KD"
     elif bKD_bVOR == 'bVOR':
-        ave_L = state.ave_beta_vor
+        ave_L = state.ave_psi4_vor
         tmp = "vor"
     elif bKD_bVOR == 'FFT':
         tmp = str(input('Are we looking at magnitude of psi4 voronoi ("vor") or KD ("KD")?'))
@@ -2496,9 +2496,9 @@ def beta_vs_alpha(state, QD_list,bKD_bVOR,QD_list2 = None):
     # betalistloc = []
 
     if bKD_bVOR == 'KD':
-        ave_betaKDVOR = state.ave_beta_KD
+        ave_betaKDVOR = state.ave_psi4_KD
     elif bKD_bVOR == 'vor':
-        ave_betaKDVOR = state.ave_beta_vor
+        ave_betaKDVOR = state.ave_psi4_vor
     else:
         return('Second argument should be "KD" for plotting alpha<KD> vs betaKD - <betaKD>, or "vor" for alpha<vor> vs betaVor - <betaVor>')
 
@@ -2572,10 +2572,10 @@ def plot_psi4_alpha_ave(state, QD_list,bKD_bVOR,QD_list2 = None):
     '''
       
     if bKD_bVOR == 'bKD':
-        ave_L = state.ave_beta_KD
+        ave_L = state.ave_psi4_KD
         tmp = "KD"
     elif bKD_bVOR == 'bVOR':
-        ave_L = state.ave_beta_vor
+        ave_L = state.ave_psi4_vor
         tmp = "vor"
     else:
         return('Please input "bKD" or "bVOR" to specify which local orientation you want compared.')
