@@ -13,30 +13,26 @@ to be in each individual dot.orientation. It should be a attribute of the state
 class. This isn't particularly important thought, and would be a pain to fix I reckon. 
 '''
 
-
+import helpers 
 import numpy as np
 import scipy as sp
-import matplotlib
+# import matplotlib #?
 import matplotlib.pyplot as plt
-import pickle
+import pickle #? 
 from PIL import Image
 import skimage
 import sklearn
-# blob detection used for segmentation and bragg spot finding
-from skimage.feature import blob_log, blob_dog, blob_doh
-# for watershed implementation 
-from scipy.ndimage.filters import gaussian_filter
-from skimage.morphology import watershed
+
 # for segmentation and making masks
-from scipy.ndimage.morphology import binary_closing, binary_opening, binary_dilation, binary_erosion
+from scipy.ndimage.morphology import binary_closing, binary_opening, binary_dilation, binary_erosion, distance_transform_edt
+from skimage.segmentation import random_walker
+from scipy.ndimage.measurements import center_of_mass
 
 from time import time
 from os.path import exists
 from os import makedirs
 
-from scipy import ndimage as ndi
-# could be switched in the code, used once
-from scipy.ndimage.measurements import center_of_mass
+# from scipy import ndimage as ndi
 
 # KD tree
 from sklearn import neighbors
@@ -47,11 +43,8 @@ from matplotlib.collections import PatchCollection
 from scipy.spatial import Voronoi, voronoi_plot_2d, ConvexHull
 
 from helpers_orig import *
-import matplotlib.animation as animation
+# import matplotlib.animation as animation
 from matplotlib.widgets import Slider, Button 
-import time
-
-
 
 class QD(object): 
     '''
@@ -216,18 +209,12 @@ class state(object):
 
         while True:
             plt.pause(1)
-
             if seg_array[0] != -1:
                 seg_thresh = seg_array[0]
                 break
 
 
         print('seg threshhold: ', seg_thresh)
-        
-        ### End of getting first threshhold value. 
-
-
-
 
         print('this part takes a minute')
         
@@ -238,32 +225,29 @@ class state(object):
         # uncomment the following lines if you like: 
         print('heres the segmented image... not necessary but nice to see it didnt screw up.')
         show_im(img_segmented[0])
-        print("A RuntimeWarning is thrown. Don't worry about it too much... \n also this part takes several minutes.")
+        plt.pause(2)
+        
+        # print("A RuntimeWarning is thrown. Don't worry about it too much... \n also this part takes several minutes.")
         
         # get center of masses and make initial QD_list
         # this throws a runtime warning -- not sure why and as it works I haven't looked into it too much. 
-        #self.QD_list = self.center_masses(self.seg_image[0], self.seg_image[1], self.filename)
+        self.QD_list = self.center_masses(self.seg_image[0], self.seg_image[1], self.filename)
 
-        print('''about to engage clickable_im so that you can make corrections as necessary.
-            \nFor the most part the dots near the edge are cropped so they dont matter as much,
-            \nbut they are still helpful to add so the ones not on the edge have a more accurate psi4 value.
-            \nRight click to add a dot, delete key near the cm of a dot to delete it.\n''')
-        check = 'correct'
-        while check != 'done':
-            self.clickable_im_cm(self.orig_image, self.QD_list)
-            check = str(input('say "done" if done, or anything else to make more edits: '))
+        # quick check showing you where the centers of mass are now: 
 
-        #this corrects for changes made in clickable_im, somehow gets weirded out sometimes
-        i = 0
-        for dot in self.QD_list:
-            dot.QD_index = i
-            i += 1
+        centers = []
+        for QD in self.QD_list:
+            centers.append(QD.cm)
+
+        show_im_fits(self.orig_image, np.array(centers))
+
+        return('current point')
 
         # so at this point the QD_list is made with all the dots in it. Next steps
         # are defining the neighbors of each QD.  
 
-        import warnings
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
+        # import warnings
+        # warnings.filterwarnings("ignore", category=DeprecationWarning)
         # Poor form, I know, but it threw a warning every time it made a tree.
         
         # calculate psi4 KD for all the dots: 
@@ -273,7 +257,7 @@ class state(object):
         self.psi4rad(self.QD_list, 184)
 
         #psi4vor 
-        self.psi4V(self.QD_list)
+        self.psi4vor(self.QD_list)
         
         # gets superlattice orientation with help of user input.
         # I decided it wasn't worth the time to try to pick out the points that corresponded to the 
@@ -541,80 +525,91 @@ class state(object):
         return(ffth,r)
     
 
+
     def segment_im(self, im, threshhold):
-        '''This function takes in the original image and segments it using a watershed algorithm and the threshhold value
-         Returns the segmented image and number of marked dots
-         Also has the option of saving the image to file
-         Time to run: a minute or two
-
-         ### this function used to work fine, just recentl I've found it started doing some odd things and sometimes making a dot
-         super small in the middle, not sure why. I'm looking into that or will be soon'''
-
-         ### Okay! So it's definitely an issue with the actual watershed implemenation, and I'm not sure why!
-         ### this is currently in progress hence the comments and such. 
-
-        # threshholds the image and runs some openings and closings to get it into a good format to use a blob finder on
-        threshholded_im = im > threshhold
-        opened_im = binary_opening(threshholded_im,iterations = 30)
-        distanceT = ndi.distance_transform_edt(opened_im)
-        open3 = binary_opening(distanceT, iterations = 30)
-        distance2 = ndi.distance_transform_edt(open3)
-
-        # blob finder finds an approximate center for each dot
-        blobs = blob_dog(distance2, max_sigma=5, min_sigma = 1, threshold=.01)
-
-        # uncomment everything about "points" if you want it to display the sources for the watershed algorithm
-        points = []
+        '''This function takes in the original image and segments it using a random walker algorithm 
+        and the threshhold value given. It returns the segmented image
+        (where each QD corresponds to a different color value) and the number of QDs. 
+        Originally was done by a watershed algorithm but the backend of that was changed and it started
+        screwing up. I'm happier with random walker anyways though, I think it has better edges
+        between QDs. 
         
-        points = np.array(points)
+        returns: (segmented image, #QDs)
+        '''
+
+        # threshholds the image and runs some openings and closings to make a mask
+        threshholded_im = im > threshhold    
+        opened_im = binary_opening(threshholded_im,iterations = 3)
+        mask = binary_closing(opened_im, iterations = 3)
+        
+        # applies a distance transform and peak finder to get center of each QD
+        distanceT = distance_transform_edt(mask)
+        local_max_points = skimage.feature.corner_peaks(distanceT, min_distance=40, indices=True)
+        other = skimage.feature.peak_local_max(distanceT, min_distance=40, indices=True)
+        
+        ''' So there is a small issue in the way skimage works: 
+        peak_local_max labels all connected max points (I can't get it to not)
+        and corner_peak labels the corner. So this adjusts that to the center 
+        of the same-colored area within a cutoff range of 40 pixels. '''
+        final_points = []
+        cutoff_range = 40
+        for point in local_max_points:
+            py, px = point[0], point[1]
+            color = distanceT[point[0], point[1]]
+            others = np.where(distanceT == color)
+            others_points = list(zip(others[0], others[1]))
+            
+            centers = np.zeros(np.shape(im))
+            centers[int(py),int(px)] = 1
+            for coord in others_points:
+                cy, cx = coord[0], coord[1]
+                dist = np.sqrt((cy-py)**2 + (cx - px)**2)
+                if dist < cutoff_range:
+                    centers[int(cy), int(cx)] = 1
+            
+            # gets the center of the peak from distance transform via c.o.m. 
+            com = center_of_mass(centers)
+            final_points.append(com)
+            
+
+        # so at this point the user can see where the QD rough centers are, 
+        # and add/remove as necessary.     
+        check = 'n'
+        while check != 'y':
+            points_fixed = helpers.QD_check(im, final_points)
+            check = str(input("does this work? (y/n)"))
+        
+        # now take the centers from points_fixed and turn it into a zeros array
+        # with 1 at centers
+        centers = np.zeros(np.shape(im))
+        for point in final_points:
+            centers[int(point[0]), int(point[1])] = 1
+        
+        # label to format with skimage and feed into random walker algorithm
+        markers = skimage.measure.label(centers, return_num=True)
+        marker_array = markers[0]
+        marker_num = markers[1]
+        
+        marker_array[~mask] = -1
+        rw_image = random_walker(mask, marker_array)
+
+        # show_im(rw_image, "random walk")
+        
+        return(rw_image, marker_num)
 
 
-        # fine through here
-        # creates an array of 0's the same size as original image
-        centers = np.zeros(shape = np.shape(im), dtype=bool)
-
-        # for each centerpoint found from the blob finder marks that point as 1 in the 0s array
-        for blob in blobs: 
-            y, x, r = blob
-            # a border is created around the images, this moves the sources off the border. 
-            if y > 4091: 
-                y = 4090
-            if y < 5:
-                y = 5
-            if x > 4091: 
-                x = 4090
-            if x < 5:
-                x = 5
-            centers[int(y),int(x)] = True
-            # points.append([int(y),int(x)])
-
-        # uses the ndi.label function so you get the centers in the format the watershed algorithm wants
-        markers = ndi.label(centers) 
-
-        # does morphology stuff to get a good mask 
-        open1 = binary_opening(threshholded_im, iterations = 2)
-        close1 = binary_closing(open1, iterations = 4)
-        mask = close1 
-        # overlay of markers on mask
-        # show_im_fits(mask, np.array(points))temp
-
-        labels_ws = watershed(-distance2, markers[0], mask= mask)
-
-        return(labels_ws, markers[1])
-    
     def center_masses(self, im, num, img_name):
         '''takes in the output of segment_im and gives you the centers of masses for all dat ish'''
         temp = []
         pixlist = []
 
-        for i in range(1,int(num)):
+        for i in range(1,int(num)+1):
             dot_im = np.where(im == i, 1, 0)
             npix = np.count_nonzero(dot_im)
             # pixlist.append(npix)
 
-            if npix > 15000:
-                cm = center_of_mass(dot_im)
-                temp.append(cm)
+            cm = center_of_mass(dot_im)
+            temp.append(cm)
 
         # get_histo(pixlist, 0, np.max(pixlist), 200)
         ret = []    
@@ -808,7 +803,7 @@ class state(object):
 
                 dot.psi4KD = psi4n
 
-    def psi4V(self, QD_list):
+    def psi4vor(self, QD_list):
         '''
         The Voronoi implementation of getting psi_4. This uses a lot of functions I put in the Utility Functions cell.
         since i just realized this might not be written anywhere else in this code: 

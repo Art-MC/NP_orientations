@@ -68,10 +68,11 @@ def get_ifft(fft):
     '''gets inverse of an fft'''
     return np.real(np.fft.ifft2(np.fft.ifftshift(fft)))
 
-def show_im(im):
+def show_im(im, title=None):
     '''shows an image with matplotlib'''
-    fig,ax=plt.subplots()
-    ax.matshow(im,cmap='gray')
+    fig,ax = plt.subplots()
+    ax.matshow(im, cmap = 'gray')
+    ax.set_title(str(title))
     plt.show()
 
 def show_fft(fft, peaks=None):
